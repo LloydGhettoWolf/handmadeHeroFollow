@@ -6,22 +6,42 @@
 static bool running;
 static BITMAPINFO bmInfo;
 static void* bitmapMem;
-static HBITMAP hbmp;
-static HDC context;
+static int bitmapWidth;
+static int bitmapHeight;
+
+void Render(unsigned int xOffset,unsigned int yOffset){
+	int Pitch = bitmapWidth * 4;
+	unsigned int* pixel = 0;
+	unsigned char* row = (unsigned char*)bitmapMem;
+	for (unsigned int Y = 0; Y < bitmapHeight; ++Y){
+		pixel = (unsigned int*)row;
+		for (unsigned int X = 0; X < bitmapWidth; ++X){
+			unsigned char r, g, b;
+			b = xOffset + X;
+			g = Y;
+			r = 0;
+
+			*pixel = ((r << 16) | (g << 8) | b);
+			++pixel;
+		}
+		row += Pitch;
+	}
+}
 
 void ResizeDIBSection(int width, int height){
 
-	if (hbmp){
-		DeleteObject(hbmp);
+	int videoMemoryRequired = 4 * width * height;
+
+	if (bitmapMem){
+		VirtualFree(bitmapMem, videoMemoryRequired, MEM_RELEASE);
 	}
-	
-	if(!context){
-		context = CreateCompatibleDC(0);
-	}
+
+	bitmapWidth  = width;
+	bitmapHeight = height;
 	
 	bmInfo.bmiHeader.biSize			= sizeof(bmInfo.bmiHeader);
-	bmInfo.bmiHeader.biWidth		= width;
-	bmInfo.bmiHeader.biHeight		= height;
+	bmInfo.bmiHeader.biWidth		= bitmapWidth;
+	bmInfo.bmiHeader.biHeight		= -bitmapHeight;
 	bmInfo.bmiHeader.biPlanes		= 1;
 	bmInfo.bmiHeader.biBitCount		= 32;
 	bmInfo.bmiHeader.biCompression  = BI_RGB;
@@ -31,27 +51,16 @@ void ResizeDIBSection(int width, int height){
 	bmInfo.bmiHeader.biClrUsed		 = 0;
 	bmInfo.bmiHeader.biClrImportant  = 0;
 
-	hbmp =  CreateDIBSection(
-			context,
-			&bmInfo,
-			DIB_RGB_COLORS,
-			&bitmapMem,
-			0,0
-		);
+	
+	bitmapMem = VirtualAlloc(0,videoMemoryRequired,MEM_COMMIT,PAGE_READWRITE);
 
 }
 
 void UpdateWindow(HDC context, int x,int y,int width,int height){
 	StretchDIBits(
 		context,
-		x,
-		y,
-		width,
-		height,
-		x,
-		y,
-		width,
-		height,
+		0,0,bitmapWidth,bitmapHeight,
+		0,0,width,height,
 		bitmapMem,
 		&bmInfo,
 		DIB_RGB_COLORS,
@@ -147,20 +156,33 @@ int CALLBACK WinMain(
 				instance,
 				0
 			);
+
 		if (winHandle){
 			MSG message;
 			running = true;
 			while(running){
-				BOOL messageResult = GetMessage(&message, 0, 0, 0);
-				if (messageResult > 0){
+
+				
+				while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)){
+
+					if (message.message == WM_QUIT){
+						running = false;
+					}
+
 					TranslateMessage(&message);
 					DispatchMessage(&message);
-				}else{
-					break;
 				}
-			}
-		}else{
 
+				static int XOffset = 0;
+				Render(XOffset++, 0);
+				RECT resizeRect;
+				GetClientRect(winHandle, &resizeRect);
+				int height = resizeRect.bottom - resizeRect.top;
+				int width = resizeRect.right - resizeRect.left;
+				HDC context = GetDC(winHandle);
+				UpdateWindow(context, 0, 0, width, height);
+				ReleaseDC(winHandle, context);
+			}
 		}
 	}
 	return 0;
