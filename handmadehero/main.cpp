@@ -4,18 +4,28 @@
 #include <Windows.h>
 
 static bool running;
-static BITMAPINFO bmInfo;
-static void* bitmapMem;
-static int bitmapWidth;
-static int bitmapHeight;
 
-void Render(unsigned int xOffset,unsigned int yOffset){
-	int Pitch = bitmapWidth * 4;
+struct offScreenBuffer{
+	
+	BITMAPINFO bmInfo;
+	void* bitmapMem;
+	int width;
+	int height;
+	int bytesPerPixel;
+};
+
+static offScreenBuffer buff;
+
+
+void Render(offScreenBuffer* buff,unsigned int xOffset,unsigned int yOffset){
+	int Pitch = buff->width * buff->bytesPerPixel;
 	unsigned int* pixel = 0;
-	unsigned char* row = (unsigned char*)bitmapMem;
-	for (unsigned int Y = 0; Y < bitmapHeight; ++Y){
+	unsigned char* row = (unsigned char*)buff->bitmapMem;
+	int height = buff->height;
+	int width = buff->width;
+	for (unsigned int Y = 0; Y < height; ++Y){
 		pixel = (unsigned int*)row;
-		for (unsigned int X = 0; X < bitmapWidth; ++X){
+		for (unsigned int X = 0; X < width; ++X){
 			unsigned char r, g, b;
 			b = xOffset + X;
 			g = Y;
@@ -28,41 +38,42 @@ void Render(unsigned int xOffset,unsigned int yOffset){
 	}
 }
 
-void ResizeDIBSection(int width, int height){
+void ResizeDIBSection(offScreenBuffer* buff,int width, int height){
 
-	int videoMemoryRequired = 4 * width * height;
+	int videoMemoryRequired = 4 *width * height;
 
-	if (bitmapMem){
-		VirtualFree(bitmapMem, videoMemoryRequired, MEM_RELEASE);
+	if (buff->bitmapMem){
+		VirtualFree(buff->bitmapMem, videoMemoryRequired, MEM_RELEASE);
 	}
 
-	bitmapWidth  = width;
-	bitmapHeight = height;
+	buff->bytesPerPixel = 4;
+	buff->width  = width;
+	buff->height = height;
 	
-	bmInfo.bmiHeader.biSize			= sizeof(bmInfo.bmiHeader);
-	bmInfo.bmiHeader.biWidth		= bitmapWidth;
-	bmInfo.bmiHeader.biHeight		= -bitmapHeight;
-	bmInfo.bmiHeader.biPlanes		= 1;
-	bmInfo.bmiHeader.biBitCount		= 32;
-	bmInfo.bmiHeader.biCompression  = BI_RGB;
-	bmInfo.bmiHeader.biSizeImage	= 0;
-	bmInfo.bmiHeader.biXPelsPerMeter = 0;
-	bmInfo.bmiHeader.biYPelsPerMeter = 0;
-	bmInfo.bmiHeader.biClrUsed		 = 0;
-	bmInfo.bmiHeader.biClrImportant  = 0;
+	buff->bmInfo.bmiHeader.biSize = sizeof(buff->bmInfo.bmiHeader);
+	buff->bmInfo.bmiHeader.biWidth = buff->width;
+	buff->bmInfo.bmiHeader.biHeight = -buff->height;
+	buff->bmInfo.bmiHeader.biPlanes = 1;
+	buff->bmInfo.bmiHeader.biBitCount = 32;
+	buff->bmInfo.bmiHeader.biCompression = BI_RGB;
+	buff->bmInfo.bmiHeader.biSizeImage = 0;
+	buff->bmInfo.bmiHeader.biXPelsPerMeter = 0;
+	buff->bmInfo.bmiHeader.biYPelsPerMeter = 0;
+	buff->bmInfo.bmiHeader.biClrUsed = 0;
+	buff->bmInfo.bmiHeader.biClrImportant = 0;
 
 	
-	bitmapMem = VirtualAlloc(0,videoMemoryRequired,MEM_COMMIT,PAGE_READWRITE);
+	buff->bitmapMem = VirtualAlloc(0, videoMemoryRequired, MEM_COMMIT, PAGE_READWRITE);
 
 }
 
-void UpdateWindow(HDC context, int x,int y,int width,int height){
+void UpdateWindow(offScreenBuffer* buff,HDC context, int x, int y, int width, int height){
 	StretchDIBits(
 		context,
-		0,0,bitmapWidth,bitmapHeight,
-		0,0,width,height,
-		bitmapMem,
-		&bmInfo,
+		0, 0, width, height,
+		0,0,buff->width,buff->height,
+		buff->bitmapMem,
+		&(buff->bmInfo),
 		DIB_RGB_COLORS,
 		SRCCOPY);
 }
@@ -82,14 +93,8 @@ LRESULT CALLBACK WindowProcCallback(
 
 		case WM_SIZE:
 		{
-			RECT resizeRect;
-			GetClientRect(window, &resizeRect);
-			int height = resizeRect.bottom - resizeRect.top;
-			int width = resizeRect.right - resizeRect.left;
-			ResizeDIBSection(width, height);
-			OutputDebugString(L"WM_SIZE\n");
 		}
-				break;
+			break;
 
 		case WM_DESTROY:
 			running = false;
@@ -113,7 +118,7 @@ LRESULT CALLBACK WindowProcCallback(
 			int width = paint.rcPaint.right - paint.rcPaint.left;
 			int top  = paint.rcPaint.top;
 			int left = paint.rcPaint.left;
-			UpdateWindow(devContext,left,top,width,height);
+			UpdateWindow(&buff,devContext,left,top,width,height);
 			EndPaint(window, &paint);
 			OutputDebugString(L"WM_PAINT\n");
 		}
@@ -136,7 +141,9 @@ int CALLBACK WinMain(
 {
 	WNDCLASS windowClass = {};
 
-	windowClass.style		  = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
+	ResizeDIBSection(&buff, 1028, 768);
+
+	windowClass.style		  = CS_HREDRAW | CS_VREDRAW;
 	windowClass.lpfnWndProc   = WindowProcCallback;
 	windowClass.hInstance	  = instance;
 	windowClass.lpszClassName = L"myGameWindowClass";
@@ -156,6 +163,7 @@ int CALLBACK WinMain(
 				instance,
 				0
 			);
+		
 
 		if (winHandle){
 			MSG message;
@@ -174,13 +182,13 @@ int CALLBACK WinMain(
 				}
 
 				static int XOffset = 0;
-				Render(XOffset++, 0);
+				Render(&buff,XOffset++, 0);
 				RECT resizeRect;
 				GetClientRect(winHandle, &resizeRect);
 				int height = resizeRect.bottom - resizeRect.top;
 				int width = resizeRect.right - resizeRect.left;
 				HDC context = GetDC(winHandle);
-				UpdateWindow(context, 0, 0, width, height);
+				UpdateWindow(&buff,context, 0, 0, width, height);
 				ReleaseDC(winHandle, context);
 			}
 		}
